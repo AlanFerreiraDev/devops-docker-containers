@@ -1,26 +1,52 @@
-# Pego a imagem do docker hub, padrão de imagens
-FROM node:20-slim
+# Stage 1 - Build
+FROM node:20 AS build
 
-# Cria um diretório para a aplicação na minha máquina
+# Habilitar Corepack para Yarn Berry (v4)
+RUN corepack enable
+
+# Forçar o uso de node_modules (em vez de Plug'n'Play)
+RUN yarn config set nodeLinker node-modules
+
+# Limpar o cache do Yarn para evitar problemas com dependências
+RUN yarn cache clean
+
+# Cria um diretório para a aplicação na máquina
 WORKDIR /usr/src/app
 
-COPY package.json yarn.lock ./
-COPY .yarn ./.yarn
-
-#  Dá permissão nas pastas para o usuário node
-RUN chown -R node:node /usr/src/app
-
-# Instala o yarn
-RUN yarn 
-
-# Copia todos os arquivos da minha máquina para a pasta da aplicação
+# Copiar todos os arquivos necessários para a build (incluindo package.json, yarn.lock, etc.)
 COPY . .
 
-# Roda o build da aplicação
+# Ajusta as permissões para o usuário 'node'
+RUN chown -R node:node /usr/src/app
+
+# Instala todas as dependências usando Yarn v4
+RUN yarn install --immutable --check-cache --inline-builds
+
+# Verificar se o node_modules foi corretamente criado
+RUN ls -la node_modules
+
+# Executa o build da aplicação
 RUN yarn run build
+
+# Instala todas as dependências usando Yarn v4
+RUN yarn workspaces focus --production && yarn cache clean
+
+# Stage 2 - Produção
+FROM node:20-alpine3.20
+
+# Habilitar Corepack para Yarn Berry (v4)
+RUN corepack enable
+
+# Cria o diretório de trabalho no ambiente de produção
+WORKDIR /usr/src/app
+
+# Copia os arquivos de build e as dependências de produção do estágio anterior
+COPY --from=build /usr/src/app/dist ./dist
+COPY --from=build /usr/src/app/node_modules ./node_modules
+COPY --from=build /usr/src/app/package.json ./package.json
 
 # Expõe a porta 3000
 EXPOSE 3000
 
-# Roda o comando start
-CMD ["yarn", "run", "start"]
+# Inicia a aplicação
+CMD ["yarn", "run", "start:prod"]
